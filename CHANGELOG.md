@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## 0.1.1
+
+- Add logo
+
+## 0.1.0
 
 - Add top-level argument autocompletion for `/snapshot save|load|list|delete`.
 - `/snapshot list` now shows the directory where snapshots are stored.
