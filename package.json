@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write src/**/*.ts tests/**/*.ts package.json README.md AGENTS.md CHANGELOG.md",
+    "format:check": "prettier --check src/**/*.ts tests/**/*.ts package.json README.md AGENTS.md CHANGELOG.md",
     "prepublishOnly": "npm run typecheck && npm run test"
   },
   "author": "Nicholas Moen",

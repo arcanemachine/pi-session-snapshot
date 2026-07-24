@@ -85,9 +85,11 @@ Session snapshots can contain prompts, model responses, tool output, paths, and 
 npm run typecheck
 npm run test
 npm run build
-npm run format
+npm run format:check
 npm pack --dry-run
 ```
+
+`npm run format:check` verifies formatting without changing files. Use `npm run format` only for intentional package-wide reformatting. For focused work, format only the paths you changed, for example `npx prettier --write src/ui/flow.ts`.
 
 Automated filesystem tests use isolated temporary directories and do not touch the real Pi agent directory.
 
