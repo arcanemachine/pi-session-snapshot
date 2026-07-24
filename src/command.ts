@@ -18,6 +18,36 @@ import { createSnapshotUI } from "./ui/components.js";
 
 const ACTIONS = new Set(["save", "load", "list", "delete"]);
 
+const ACTION_COMPLETIONS: { value: string; label: string }[] = [
+  {
+    value: "save",
+    label: "save — Save the active session path as a named snapshot",
+  },
+  {
+    value: "load",
+    label: "load — Restore a named snapshot by forking a new session",
+  },
+  {
+    value: "list",
+    label: "list — List saved snapshots",
+  },
+  { value: "delete", label: "delete — Delete a named snapshot" },
+];
+
+/**
+ * Top-level `/snapshot` argument completions. Only the first token (the
+ * action) is completed; once the user moves into the name argument the prefix
+ * no longer matches any action and completions fall silent.
+ */
+export function completeSnapshotActions(
+  argumentPrefix: string,
+): { value: string; label: string }[] | null {
+  const matches = ACTION_COMPLETIONS.filter((item) =>
+    item.value.startsWith(argumentPrefix),
+  );
+  return matches.length === 0 ? null : matches;
+}
+
 export interface ParsedCommand {
   action: "interactive" | "save" | "load" | "list" | "delete";
   name?: string;
@@ -146,6 +176,7 @@ export function registerSnapshotCommand(
 ): void {
   pi.registerCommand("snapshot", {
     description: SNAPSHOT_COMMAND_DESCRIPTION,
+    getArgumentCompletions: completeSnapshotActions,
     handler: createSnapshotCommandHandler(pathsProvider),
   });
 }

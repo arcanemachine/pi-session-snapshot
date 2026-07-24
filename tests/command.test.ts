@@ -3,6 +3,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import piSessionSnapshot from "../src/index.js";
 import {
+  completeSnapshotActions,
   createSnapshotCommandHandler,
   parseSnapshotCommand,
   registerSnapshotCommand,
@@ -163,18 +164,52 @@ describe("command handler", () => {
   });
 });
 
+describe("completeSnapshotActions", () => {
+  it("offers every top-level action for an empty prefix", () => {
+    expect(
+      completeSnapshotActions("")
+        ?.map((item) => item.value)
+        .sort(),
+    ).toEqual(["delete", "list", "load", "save"]);
+  });
+
+  it("narrows to a single matching action by prefix", () => {
+    expect(completeSnapshotActions("sa")?.map((item) => item.value)).toEqual([
+      "save",
+    ]);
+  });
+
+  it("returns null when the prefix matches no action", () => {
+    expect(completeSnapshotActions("frobnicate")).toBeNull();
+  });
+
+  it("returns null once the prefix has moved past the action token", () => {
+    expect(completeSnapshotActions("save ")).toBeNull();
+    expect(completeSnapshotActions("save baseline")).toBeNull();
+  });
+});
+
 describe("registerSnapshotCommand", () => {
-  it("registers exactly the snapshot command with the approved description", () => {
+  it("registers exactly the snapshot command with the approved description and completions", () => {
     let name: string | undefined;
     let description: string | undefined;
+    let completions: ((prefix: string) => unknown) | undefined;
     registerSnapshotCommand({
-      registerCommand(commandName: string, options: { description?: string }) {
+      registerCommand(
+        commandName: string,
+        options: {
+          description?: string;
+          getArgumentCompletions?: (prefix: string) => unknown;
+        },
+      ) {
         name = commandName;
         description = options.description;
+        completions = options.getArgumentCompletions;
       },
     } as never);
     expect(name).toBe("snapshot");
     expect(description).toBe(SNAPSHOT_COMMAND_DESCRIPTION);
+    expect(completions).toBe(completeSnapshotActions);
   });
 });
 
