@@ -60,7 +60,9 @@ export interface FlowContext {
   waitForIdle(): Promise<void>;
   switchSession(
     sessionPath: string,
-    options?: { withSession?: (ctx: unknown) => Promise<void> | void },
+    options?: {
+      withSession?: (ctx: unknown) => Promise<void> | void;
+    },
   ): Promise<{ cancelled: boolean }>;
 }
 
@@ -85,9 +87,14 @@ export async function runInteractiveMenu(
       case "save":
         await runSaveFlow(ctx, paths, ui, undefined, false);
         continue;
-      case "load":
-        await runLoadFlow(ctx, paths, ui, undefined);
+      case "load": {
+        const outcome = await runLoadFlow(ctx, paths, ui, undefined);
+        // A successful load replaced the session; the original command ctx is
+        // now stale. Stop here so the menu never reuses it. A cancelled or
+        // failed load leaves the original session active and may continue.
+        if (outcome === "replaced") return;
         continue;
+      }
       case "delete":
         await runDeleteFlow(ctx, paths, ui, undefined, false);
         continue;
@@ -203,12 +210,14 @@ export async function runSaveFlow(
   }
 }
 
+export type LoadFlowOutcome = "replaced" | "unchanged";
+
 export async function runLoadFlow(
   ctx: FlowContext,
   paths: SnapshotPaths,
   ui: SnapshotUI,
   name: string | undefined,
-): Promise<void> {
+): Promise<LoadFlowOutcome> {
   let target: string;
   if (name) {
     target = name;
@@ -216,17 +225,17 @@ export async function runLoadFlow(
     const items = listSnapshots(paths.snapshotDir);
     if (items.length === 0) {
       ui.notify("No session snapshots are saved yet.", "warning");
-      return;
+      return "unchanged";
     }
     const picked = await ui.pickSnapshot("Load session snapshot", items, 0);
-    if (!picked) return;
+    if (!picked) return "unchanged";
     target = picked.entry.name;
   } else {
     ui.notify(
       "INVALID_ARGUMENT: /snapshot load requires a name outside TUI mode.",
       "warning",
     );
-    return;
+    return "unchanged";
   }
 
   await ctx.waitForIdle();
@@ -240,20 +249,18 @@ export async function runLoadFlow(
     }).destinationFile;
   } catch (error) {
     ui.notify(formatSnapshotError(error), "error");
-    return;
+    return "unchanged";
   }
 
-  const result = await ctx.switchSession(destinationFile, {
-    withSession: (replacement) => {
-      (
-        replacement as { ui: { notify: (m: string, t?: string) => void } }
-      ).ui.notify(`Loaded session snapshot "${target}".`, "info");
-    },
-  });
+  // Pi shows its native "Resumed session" status after a successful switch,
+  // so no post-replacement work is needed here. Do not touch the original
+  // command ctx after replacement; the caller checks the returned outcome.
+  const result = await ctx.switchSession(destinationFile);
 
   if (result.cancelled) {
     // The switch was rejected by a session_before_switch handler; remove the
-    // just-created fork so it does not orphan in the session directory.
+    // just-created fork so it does not orphan in the session directory. The
+    // original session is still active, so the menu may continue.
     try {
       if (existsSync(destinationFile)) unlinkSync(destinationFile);
     } catch {
@@ -263,7 +270,10 @@ export async function runLoadFlow(
       "SNAPSHOT_LOAD_FAILED: Loading the session snapshot was cancelled.",
       "warning",
     );
+    return "unchanged";
   }
+
+  return "replaced";
 }
 
 export async function runDeleteFlow(
@@ -430,7 +440,9 @@ export function createFlowContext(ctx: {
   waitForIdle(): Promise<void>;
   switchSession(
     sessionPath: string,
-    options?: { withSession?: (ctx: unknown) => Promise<void> | void },
+    options?: {
+      withSession?: (ctx: unknown) => Promise<void> | void;
+    },
   ): Promise<{ cancelled: boolean }>;
 }): FlowContext {
   return ctx;

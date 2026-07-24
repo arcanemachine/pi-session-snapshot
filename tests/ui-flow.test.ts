@@ -43,6 +43,7 @@ class FakeUI implements SnapshotUI {
   private picks: (PickedSnapshot | null)[];
   private replacements: CollisionChoice[];
   private deletes: boolean[];
+  selectActionCalls = 0;
   readonly inputCalls: Array<{ initial: string }> = [];
   readonly pickCalls: Array<{ items: SnapshotEntry[]; initialIndex: number }> =
     [];
@@ -64,6 +65,7 @@ class FakeUI implements SnapshotUI {
   }
 
   async selectAction(initialIndex: number): Promise<ActionMenuResult> {
+    this.selectActionCalls += 1;
     return this.actions.shift() ?? { kind: "cancel", index: initialIndex };
   }
 
@@ -230,7 +232,7 @@ describe("save collision behavior", () => {
 });
 
 describe("load flow", () => {
-  it("forks and notifies on a successful picker selection", async () => {
+  it("forks and reports replacement on a successful picker selection", async () => {
     const { paths, flowCtx, session } = setupSessionAndPaths();
     coreSaveSnapshot({
       snapshotDir: paths.snapshotDir,
@@ -252,28 +254,19 @@ describe("load flow", () => {
       ],
     });
 
-    const replacementNotifications: Array<{ message: string; type?: string }> =
-      [];
     const successfulFlowCtx: FlowContext = {
       ...flowCtx,
-      async switchSession(_sessionPath, options) {
-        await options?.withSession?.({
-          ui: {
-            notify(message: string, type?: string) {
-              replacementNotifications.push({ message, type });
-            },
-          },
-        });
+      async switchSession(_sessionPath) {
         return { cancelled: false };
       },
     };
 
-    await runLoadFlow(successfulFlowCtx, paths, ui, undefined);
+    const outcome = await runLoadFlow(successfulFlowCtx, paths, ui, undefined);
 
+    expect(outcome).toBe("replaced");
     expect(ui.pickCalls).toHaveLength(1);
-    expect(replacementNotifications[0]?.message).toContain(
-      'Loaded session snapshot "baseline"',
-    );
+    // A successful replacement must not touch the old command ctx's UI.
+    expect(ui.notifications).toEqual([]);
   });
 
   it("removes the just-created fork when the switch is cancelled", async () => {
@@ -316,8 +309,9 @@ describe("load flow", () => {
       ],
     });
 
-    await runLoadFlow(flowCtx, paths, ui, undefined);
+    const outcome = await runLoadFlow(flowCtx, paths, ui, undefined);
 
+    expect(outcome).toBe("unchanged");
     expect(createdFile).toBeDefined();
     expect(existsSync(createdFile!)).toBe(false);
     expect(ui.notifications[0]?.type).toBe("warning");
@@ -356,6 +350,91 @@ describe("delete flow", () => {
     });
     await runDeleteFlow(flowCtx, paths, confirmedUI, undefined, false);
     expect(existsSync(entry.file)).toBe(false);
+  });
+});
+
+describe("interactive menu load lifecycle", () => {
+  it("stops after a successful load so it never reuses the stale pre-replacement command ctx", async () => {
+    const { paths, flowCtx, session } = setupSessionAndPaths();
+    coreSaveSnapshot({
+      snapshotDir: paths.snapshotDir,
+      name: "baseline",
+      sourceSessionFile: session.getSessionFile()!,
+      leafId: session.getLeafId()!,
+    });
+    const entry = {
+      name: "baseline",
+      file: join(paths.snapshotDir, "baseline.jsonl"),
+      bytes: 1,
+      modifiedMs: 0,
+    };
+
+    const successfulFlowCtx: FlowContext = {
+      ...flowCtx,
+      async switchSession(_sessionPath) {
+        return { cancelled: false };
+      },
+    };
+
+    // A second action is queued. If the bug regresses, the menu reopens after
+    // replacement and consumes this action, calling selectAction a second time.
+    const ui = new FakeUI({
+      actions: [
+        { kind: "load", index: 0 },
+        { kind: "save", index: 0 },
+      ],
+      picks: [{ entry, index: 0 }],
+    });
+
+    await runInteractiveMenu(successfulFlowCtx, paths, ui);
+
+    expect(ui.selectActionCalls).toBe(1);
+    // A successful replacement must not touch the stale old command ctx's UI.
+    expect(ui.notifications).toEqual([]);
+    // The never-reached save flow must not have touched the stale UI.
+    expect(ui.inputCalls).toEqual([]);
+    expect(ui.replaceCalls).toEqual([]);
+  });
+
+  it("returns to the menu after a cancelled load and remains in the original session", async () => {
+    const { paths, flowCtx, session } = setupSessionAndPaths();
+    coreSaveSnapshot({
+      snapshotDir: paths.snapshotDir,
+      name: "baseline",
+      sourceSessionFile: session.getSessionFile()!,
+      leafId: session.getLeafId()!,
+    });
+    const entry = {
+      name: "baseline",
+      file: join(paths.snapshotDir, "baseline.jsonl"),
+      bytes: 1,
+      modifiedMs: 0,
+    };
+
+    let createdFile: string | undefined;
+    const cancelledFlowCtx: FlowContext = {
+      ...flowCtx,
+      async switchSession(sessionPath) {
+        createdFile = sessionPath;
+        return { cancelled: true };
+      },
+    };
+
+    const ui = new FakeUI({
+      actions: [
+        { kind: "load", index: 0 },
+        { kind: "cancel", index: 0 },
+      ],
+      picks: [{ entry, index: 0 }],
+    });
+
+    await runInteractiveMenu(cancelledFlowCtx, paths, ui);
+
+    expect(ui.selectActionCalls).toBe(2);
+    expect(createdFile).toBeDefined();
+    expect(existsSync(createdFile!)).toBe(false);
+    expect(ui.notifications[0]?.type).toBe("warning");
+    expect(ui.notifications[0]?.message).toContain("SNAPSHOT_LOAD_FAILED");
   });
 });
 
