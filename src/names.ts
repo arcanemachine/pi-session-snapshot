@@ -38,7 +38,10 @@ export function resolveSnapshotFile(snapshotDir: string, name: string): string {
 
 export function nameFromSnapshotFilename(filename: string): string {
   if (!filename.toLowerCase().endsWith(SNAPSHOT_SUFFIX)) {
-    throw new SnapshotError("INVALID_NAME", "Snapshot file must end in .jsonl.");
+    throw new SnapshotError(
+      "INVALID_NAME",
+      "Snapshot file must end in .jsonl.",
+    );
   }
   return normalizeSnapshotName(filename);
 }

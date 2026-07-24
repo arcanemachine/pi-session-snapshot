@@ -14,7 +14,11 @@ export type SnapshotErrorCode =
 export class SnapshotError extends Error {
   readonly code: SnapshotErrorCode;
 
-  constructor(code: SnapshotErrorCode, message: string, options?: ErrorOptions) {
+  constructor(
+    code: SnapshotErrorCode,
+    message: string,
+    options?: ErrorOptions,
+  ) {
     super(message, options);
     this.name = "SnapshotError";
     this.code = code;
