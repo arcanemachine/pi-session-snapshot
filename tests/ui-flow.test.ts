@@ -11,11 +11,11 @@ import {
   createFlowContext,
   type ActionKind,
   type ActionMenuResult,
-  type CollisionChoice,
   type FlowContext,
   type PickedSnapshot,
   type SnapshotUI,
   runInteractiveMenu,
+  runListFlow,
   runSaveFlow,
   runDeleteFlow,
   runLoadFlow,
@@ -33,7 +33,7 @@ interface FakeUIOptions {
   actions?: ActionMenuResult[];
   inputs?: (string | null)[];
   picks?: (PickedSnapshot | null)[];
-  replacements?: CollisionChoice[];
+  replacements?: boolean[];
   deletes?: boolean[];
 }
 
@@ -41,7 +41,7 @@ class FakeUI implements SnapshotUI {
   private actions: ActionMenuResult[];
   private inputs: (string | null)[];
   private picks: (PickedSnapshot | null)[];
-  private replacements: CollisionChoice[];
+  private replacements: boolean[];
   private deletes: boolean[];
   selectActionCalls = 0;
   readonly inputCalls: Array<{ initial: string }> = [];
@@ -49,7 +49,8 @@ class FakeUI implements SnapshotUI {
     [];
   readonly replaceCalls: string[] = [];
   readonly deleteCalls: string[] = [];
-  readonly listCalls: SnapshotEntry[][] = [];
+  readonly listCalls: Array<{ items: SnapshotEntry[]; snapshotDir: string }> =
+    [];
   readonly notifications: Array<{ message: string; type?: string }> = [];
 
   constructor(options: FakeUIOptions = {}) {
@@ -87,9 +88,9 @@ class FakeUI implements SnapshotUI {
     return this.picks.shift() ?? null;
   }
 
-  async confirmReplacement(name: string): Promise<CollisionChoice> {
+  async confirmReplacement(name: string): Promise<boolean> {
     this.replaceCalls.push(name);
-    return this.replacements.shift() ?? "cancel";
+    return this.replacements.shift() ?? false;
   }
 
   async confirmDelete(name: string): Promise<boolean> {
@@ -97,8 +98,8 @@ class FakeUI implements SnapshotUI {
     return this.deletes.shift() ?? false;
   }
 
-  async showList(items: SnapshotEntry[]): Promise<void> {
-    this.listCalls.push(items);
+  async showList(items: SnapshotEntry[], snapshotDir: string): Promise<void> {
+    this.listCalls.push({ items, snapshotDir });
   }
 }
 
@@ -151,7 +152,7 @@ describe("interactive menu navigation", () => {
 });
 
 describe("save collision behavior", () => {
-  it("canceling a collision preserves the entered name and re-prompts", async () => {
+  it("answering no to a collision preserves the entered name and re-prompts", async () => {
     const { paths, flowCtx, session } = setupSessionAndPaths();
     coreSaveSnapshot({
       snapshotDir: paths.snapshotDir,
@@ -161,7 +162,7 @@ describe("save collision behavior", () => {
     });
     const ui = new FakeUI({
       inputs: ["baseline", "renamed"],
-      replacements: ["cancel"],
+      replacements: [false],
     });
 
     await runSaveFlow(flowCtx, paths, ui, undefined, false);
@@ -172,26 +173,7 @@ describe("save collision behavior", () => {
     expect(existsSync(join(paths.snapshotDir, "renamed.jsonl"))).toBe(true);
   });
 
-  it("choosing save-as-another-name preserves the name and re-prompts", async () => {
-    const { paths, flowCtx, session } = setupSessionAndPaths();
-    coreSaveSnapshot({
-      snapshotDir: paths.snapshotDir,
-      name: "baseline",
-      sourceSessionFile: session.getSessionFile()!,
-      leafId: session.getLeafId()!,
-    });
-    const ui = new FakeUI({
-      inputs: ["baseline", "renamed"],
-      replacements: ["rename"],
-    });
-
-    await runSaveFlow(flowCtx, paths, ui, undefined, false);
-
-    expect(ui.inputCalls[1]).toEqual({ initial: "baseline" });
-    expect(existsSync(join(paths.snapshotDir, "renamed.jsonl"))).toBe(true);
-  });
-
-  it("choosing replace overwrites the existing snapshot", async () => {
+  it("answering yes to a collision overwrites the existing snapshot", async () => {
     const { paths, flowCtx, session } = setupSessionAndPaths();
     appendUser(session, "second");
     appendAssistant(session, "second reply");
@@ -206,14 +188,13 @@ describe("save collision behavior", () => {
     appendAssistant(session, "short reply");
     const ui = new FakeUI({
       inputs: ["baseline"],
-      replacements: ["replace"],
+      replacements: [true],
     });
 
     await runSaveFlow(flowCtx, paths, ui, undefined, false);
 
     expect(ui.replaceCalls).toEqual(["baseline"]);
-    const snapshots = ui.listCalls;
-    expect(snapshots.length).toBe(0);
+    expect(ui.listCalls.length).toBe(0);
     expect(existsSync(join(paths.snapshotDir, "baseline.jsonl"))).toBe(true);
   });
 
@@ -435,6 +416,56 @@ describe("interactive menu load lifecycle", () => {
     expect(existsSync(createdFile!)).toBe(false);
     expect(ui.notifications[0]?.type).toBe("warning");
     expect(ui.notifications[0]?.message).toContain("SNAPSHOT_LOAD_FAILED");
+  });
+});
+
+describe("list flow", () => {
+  it("passes the snapshot directory and items to the TUI list", async () => {
+    const { paths, flowCtx, session } = setupSessionAndPaths();
+    coreSaveSnapshot({
+      snapshotDir: paths.snapshotDir,
+      name: "baseline",
+      sourceSessionFile: session.getSessionFile()!,
+      leafId: session.getLeafId()!,
+    });
+    const ui = new FakeUI();
+
+    await runListFlow(flowCtx, paths, ui);
+
+    expect(ui.listCalls).toHaveLength(1);
+    expect(ui.listCalls[0]?.snapshotDir).toBe(paths.snapshotDir);
+    expect(ui.listCalls[0]?.items.map((item) => item.name)).toEqual([
+      "baseline",
+    ]);
+  });
+
+  it("reports the snapshot directory in the non-TUI notify", async () => {
+    const { paths, flowCtx, session } = setupSessionAndPaths();
+    coreSaveSnapshot({
+      snapshotDir: paths.snapshotDir,
+      name: "baseline",
+      sourceSessionFile: session.getSessionFile()!,
+      leafId: session.getLeafId()!,
+    });
+    const ui = new FakeUI();
+
+    await runListFlow({ ...flowCtx, hasUI: false }, paths, ui);
+
+    const message = ui.notifications[0]?.message ?? "";
+    expect(message).toContain("baseline");
+    expect(message).toContain(paths.snapshotDir);
+    expect(message).toContain("Snapshot directory:");
+  });
+
+  it("still reports the snapshot directory when there are no snapshots", async () => {
+    const { paths, flowCtx } = setupSessionAndPaths();
+    const ui = new FakeUI();
+
+    await runListFlow({ ...flowCtx, hasUI: false }, paths, ui);
+
+    const message = ui.notifications[0]?.message ?? "";
+    expect(message).toContain("No session snapshots are saved yet.");
+    expect(message).toContain(paths.snapshotDir);
   });
 });
 

@@ -11,7 +11,6 @@ import {
 import type {
   ActionKind,
   ActionMenuResult,
-  CollisionChoice,
   PickedSnapshot,
   SnapshotUI,
 } from "./flow.js";
@@ -86,21 +85,12 @@ export function createSnapshotUI(ctx: ExtensionCommandContext): SnapshotUI {
       return { entry: items[index]!, index };
     },
 
-    async confirmReplacement(name): Promise<CollisionChoice> {
-      const items: SelectItem[] = [
-        { value: "cancel", label: "Cancel" },
-        { value: "replace", label: "Replace" },
-        { value: "rename", label: "Save as another name" },
-      ];
-      const value = await selectSingle<string>(
+    async confirmReplacement(name): Promise<boolean> {
+      return showNoDefaultConfirm(
         ctx,
         `Snapshot "${name}" already exists`,
-        items,
-        "cancel",
-        0,
+        "Overwrite it?",
       );
-      if (value === null) return "cancel";
-      return value as CollisionChoice;
     },
 
     async confirmDelete(name): Promise<boolean> {
@@ -115,9 +105,12 @@ export function createSnapshotUI(ctx: ExtensionCommandContext): SnapshotUI {
       ctx.ui.notify(message, type);
     },
 
-    async showList(items): Promise<void> {
+    async showList(items, snapshotDir): Promise<void> {
       if (items.length === 0) {
-        ctx.ui.notify("No session snapshots are saved yet.", "info");
+        ctx.ui.notify(
+          `No session snapshots are saved yet.\nSnapshot directory: ${snapshotDir}`,
+          "info",
+        );
         return;
       }
       const selectItems: SelectItem[] = items.map((item) => ({
@@ -130,6 +123,7 @@ export function createSnapshotUI(ctx: ExtensionCommandContext): SnapshotUI {
         selectItems,
         "back",
         0,
+        snapshotDir,
       );
     },
   };
@@ -141,6 +135,7 @@ function selectSingle<T extends string>(
   items: SelectItem[],
   cancelLabel: string,
   initialIndex: number,
+  subtitle?: string,
 ): Promise<T | null> {
   return ctx.ui.custom<T | null>((tui, theme, _keybindings, done) => {
     const container = new Container();
@@ -148,6 +143,9 @@ function selectSingle<T extends string>(
       new DynamicBorder((text: string) => theme.fg("accent", text)),
     );
     container.addChild(new Text(theme.bold(title), 1, 0));
+    if (subtitle) {
+      container.addChild(new Text(theme.fg("dim", subtitle), 0, 0));
+    }
     const list = new SelectList(
       items,
       Math.min(Math.max(items.length, 1), 12),

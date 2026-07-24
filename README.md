@@ -28,7 +28,9 @@ pi -e ./src/index.ts
 /snapshot delete [name] [--force]
 ```
 
-Running `/snapshot` opens a menu for saving, loading, deleting, and listing snapshots. Saving an existing name opens a safe-default menu: **Cancel**, **Replace**, or **Save as another name**. Cancel and Save-as return to the name field with the entered value intact.
+Running `/snapshot` opens a menu for saving, loading, deleting, and listing snapshots. Saving an existing name opens a safe-default confirm: **No** / **Yes** — answering **No** returns to the name field with the entered value intact (so you can save it under a different name), and **Yes** overwrites.
+
+The top-level actions (`save`, `load`, `list`, `delete`) are autocompleted after `/snapshot `. `/snapshot list` prints the directory where snapshots are stored along with the saved snapshots.
 
 For automation or non-TUI use, `--force` is required to replace or delete:
 
@@ -60,7 +62,6 @@ Other launch-time flags still compose with the fork:
 ```bash
 pi \
   --fork ~/.pi/agent/pi-session-snapshot/baseline.jsonl \
-  --inter-agent some-agent \
   --model openai/gpt-5.4 \
   --thinking high
 ```

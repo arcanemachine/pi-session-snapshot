@@ -18,8 +18,6 @@ export interface ActionMenuResult {
   index: number;
 }
 
-export type CollisionChoice = "cancel" | "replace" | "rename";
-
 export interface PickedSnapshot {
   entry: SnapshotEntry;
   index: number;
@@ -41,10 +39,10 @@ export interface SnapshotUI {
     items: SnapshotEntry[],
     initialIndex: number,
   ): Promise<PickedSnapshot | null>;
-  confirmReplacement(name: string): Promise<CollisionChoice>;
+  confirmReplacement(name: string): Promise<boolean>;
   confirmDelete(name: string): Promise<boolean>;
   notify(message: string, type?: "info" | "warning" | "error"): void;
-  showList(items: SnapshotEntry[]): Promise<void>;
+  showList(items: SnapshotEntry[], snapshotDir: string): Promise<void>;
 }
 
 export interface FlowContext {
@@ -191,14 +189,14 @@ export async function runSaveFlow(
       }
     }
 
-    const choice = await ui.confirmReplacement(normalized);
-    if (choice === "cancel" || choice === "rename") {
+    const overwrite = await ui.confirmReplacement(normalized);
+    if (!overwrite) {
       // Preserve the entered name and return to the save-name input with
-      // the cursor at the end of the preserved value.
+      // the cursor at the end of the preserved value, so the user can save
+      // it under a different name instead.
       pending = value;
       continue;
     }
-    // replace
     try {
       performSave(ctx, paths, normalized, true);
       ui.notify(`Replaced session snapshot "${normalized}".`, "info");
@@ -376,20 +374,17 @@ export async function runListFlow(
 ): Promise<void> {
   const items = listSnapshots(paths.snapshotDir);
   if (!ctx.hasUI) {
-    if (items.length === 0) {
-      ui.notify("No session snapshots are saved yet.", "info");
-      return;
-    }
-    ui.notify(
-      [
-        "Session snapshots:",
-        ...items.map((item) => `  ${item.name} (${formatBytes(item.bytes)})`),
-      ].join("\n"),
-      "info",
-    );
+    const lines = [
+      items.length === 0
+        ? "No session snapshots are saved yet."
+        : "Session snapshots:",
+      ...items.map((item) => `  ${item.name} (${formatBytes(item.bytes)})`),
+      `Snapshot directory: ${paths.snapshotDir}`,
+    ];
+    ui.notify(lines.join("\n"), "info");
     return;
   }
-  await ui.showList(items);
+  await ui.showList(items, paths.snapshotDir);
 }
 
 function performSave(
