@@ -12,16 +12,28 @@ Useful for establishing a checkpoint from which you want to resume one or more s
 
 ## Installation
 
-Install as a Pi package:
+### From GitHub
+
+```bash
+pi install git:github.com/arcanemachine/pi-session-snapshot
+```
+
+### From npm
 
 ```bash
 pi install npm:@arcanemachine/pi-session-snapshot
 ```
 
+### From local clone
+
+```bash
+pi install /path/to/pi-session-snapshot
+```
+
 Or load the source entrypoint directly during development:
 
 ```bash
-pi -e ./src/index.ts
+pi -e /path/to/pi-session-snapshot/src/index.ts
 ```
 
 ## Commands
