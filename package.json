@@ -1,6 +1,6 @@
 {
   "name": "@arcanemachine/pi-session-snapshot",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Save and restore reusable snapshots of the active Pi session path",
   "type": "module",
   "keywords": [
