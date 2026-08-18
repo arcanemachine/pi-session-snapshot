@@ -6,6 +6,8 @@
 
 Save and restore the active path of a given Pi session.
 
+> Like this extension? See [my other Pi extensions](https://github.com/arcanemachine/pi-projects).
+
 Useful for establishing a checkpoint from which you want to resume one or more sessions, such as when you have a fleet of worker agents who you don't want to onboard before each task.
 
 > A session snapshot preserves Pi conversation context only. It does not preserve Git history, files, uncommitted changes, environment variables, or processes.
