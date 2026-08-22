@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Fix npm image metadata
+
 ## 0.1.3
 
 - Use smaller logo
