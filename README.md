@@ -42,21 +42,21 @@ pi -e /path/to/pi-session-snapshot/src/index.ts
 
 ```text
 /snapshot
-/snapshot save [name] [--force]
+/snapshot save [name] [--force|-f]
 /snapshot load [name]
 /snapshot list
-/snapshot delete [name] [--force]
+/snapshot delete [name] [--force|-f]
 ```
 
 Running `/snapshot` opens a menu for saving, loading, deleting, and listing snapshots. Saving an existing name opens a safe-default confirm: **No** / **Yes** — answering **No** returns to the name field with the entered value intact (so you can save it under a different name), and **Yes** overwrites.
 
-The top-level actions (`save`, `load`, `list`, `delete`) are autocompleted after `/snapshot `. `/snapshot list` prints the directory where snapshots are stored along with the saved snapshots.
+The top-level actions (`save`, `load`, `list`, `delete`) are autocompleted after `/snapshot `, and `--force` / `-f` are autocompleted after `/snapshot save ` or `/snapshot delete `, with or without a name. `/snapshot list` prints the directory where snapshots are stored along with the saved snapshots.
 
 For automation or non-TUI use, `--force` is required to replace or delete:
 
 ```text
 /snapshot save baseline --force
-/snapshot delete baseline --force
+/snapshot delete baseline -f
 ```
 
 Without `--force`, an existing noninteractive save fails rather than overwriting, and noninteractive deletion fails rather than deleting.

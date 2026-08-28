@@ -18,6 +18,8 @@ import { createSnapshotUI } from "./ui/components.js";
 
 const ACTIONS = new Set(["save", "load", "list", "delete"]);
 
+const FORCE_FLAGS = new Set(["--force", "-f"]);
+
 const ACTION_COMPLETIONS: { value: string; label: string }[] = [
   {
     value: "save",
@@ -42,6 +44,29 @@ const ACTION_COMPLETIONS: { value: string; label: string }[] = [
 export function completeSnapshotActions(
   argumentPrefix: string,
 ): { value: string; label: string }[] | null {
+  // The completion value replaces the full argument prefix, so flag
+  // completions must keep the action and name tokens.
+  const flagMatch = /^(save|delete)(\s+\S+)?\s+(-{1,2}\S*)$/.exec(
+    argumentPrefix,
+  );
+  if (flagMatch) {
+    const [, action, name, flag] = flagMatch;
+    const flags = ["--force", "-f"].filter((candidate) =>
+      candidate.startsWith(flag),
+    );
+    const descriptions: Record<string, string> = {
+      "--force": "Overwrite or delete without confirmation",
+      "-f": "Shorthand for --force",
+    };
+    return flags.length === 0
+      ? null
+      : flags.map((candidate) => ({
+          value: `${action}${name ?? ""} ${candidate}`,
+          label: candidate,
+          description: descriptions[candidate],
+        }));
+  }
+
   const matches = ACTION_COMPLETIONS.filter((item) =>
     item.value.startsWith(argumentPrefix),
   );
@@ -61,7 +86,7 @@ export function parseSnapshotCommand(args: string): ParsedCommand {
   const [action, ...rest] = tokens;
   if (!ACTIONS.has(action)) {
     throw new InvalidArgument(
-      `Unknown action "/snapshot ${action}". Usage: /snapshot [save|load|list|delete] [name] [--force].`,
+      `Unknown action "/snapshot ${action}". Usage: /snapshot [save|load|list|delete] [name] [--force|-f].`,
     );
   }
 
@@ -77,19 +102,21 @@ export function parseSnapshotCommand(args: string): ParsedCommand {
   let seenName = false;
 
   for (const token of rest) {
-    if (token === "--force") {
+    if (FORCE_FLAGS.has(token)) {
       if (!allowForce) {
         throw new InvalidArgument(
           `--force is not valid for "/snapshot ${action}".`,
         );
       }
       if (force) {
-        throw new InvalidArgument("Duplicate --force flag.");
+        throw new InvalidArgument(
+          "Duplicate --force flag; --force and -f cannot be combined.",
+        );
       }
       force = true;
       continue;
     }
-    if (token.startsWith("--")) {
+    if (token.startsWith("-") && token.length > 1) {
       throw new InvalidArgument(`Unknown flag "${token}".`);
     }
     if (seenName) {
@@ -132,7 +159,7 @@ export function createSnapshotCommandHandler(
         case "interactive":
           if (!ctx.hasUI) {
             ctx.ui.notify(
-              "UI_UNAVAILABLE: /snapshot requires TUI mode. Use /snapshot [save|load|list|delete] [name] [--force].",
+              "UI_UNAVAILABLE: /snapshot requires TUI mode. Use /snapshot [save|load|list|delete] [name] [--force|-f].",
               "error",
             );
             return;

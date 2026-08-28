@@ -44,6 +44,26 @@ describe("parseSnapshotCommand", () => {
       name: "baseline",
       force: true,
     });
+    expect(parseSnapshotCommand("save baseline -f")).toEqual({
+      action: "save",
+      name: "baseline",
+      force: true,
+    });
+    expect(parseSnapshotCommand("save -f baseline")).toEqual({
+      action: "save",
+      name: "baseline",
+      force: true,
+    });
+    expect(parseSnapshotCommand("delete baseline -f")).toEqual({
+      action: "delete",
+      name: "baseline",
+      force: true,
+    });
+    expect(parseSnapshotCommand("delete -f baseline")).toEqual({
+      action: "delete",
+      name: "baseline",
+      force: true,
+    });
     expect(parseSnapshotCommand("delete baseline --force")).toEqual({
       action: "delete",
       name: "baseline",
@@ -59,11 +79,14 @@ describe("parseSnapshotCommand", () => {
   it("rejects unknown actions and flags", () => {
     expect(() => parseSnapshotCommand("frobnicate")).toThrow();
     expect(() => parseSnapshotCommand("save --bogus")).toThrow();
+    expect(() => parseSnapshotCommand("save -x")).toThrow();
     expect(() => parseSnapshotCommand("list --force")).toThrow();
     expect(() => parseSnapshotCommand("load --force")).toThrow();
+    expect(() => parseSnapshotCommand("load -f")).toThrow();
     expect(() => parseSnapshotCommand("list baseline")).toThrow();
     expect(() => parseSnapshotCommand("save a b")).toThrow();
     expect(() => parseSnapshotCommand("save --force --force x")).toThrow();
+    expect(() => parseSnapshotCommand("save --force -f x")).toThrow();
   });
 });
 
@@ -186,6 +209,54 @@ describe("completeSnapshotActions", () => {
   it("returns null once the prefix has moved past the action token", () => {
     expect(completeSnapshotActions("save ")).toBeNull();
     expect(completeSnapshotActions("save baseline")).toBeNull();
+  });
+
+  it("completes force flags with the full action and name prefix", () => {
+    expect(completeSnapshotActions("save --f")).toEqual([
+      {
+        value: "save --force",
+        label: "--force",
+        description: "Overwrite or delete without confirmation",
+      },
+    ]);
+    expect(completeSnapshotActions("save -")).toEqual([
+      {
+        value: "save --force",
+        label: "--force",
+        description: "Overwrite or delete without confirmation",
+      },
+      {
+        value: "save -f",
+        label: "-f",
+        description: "Shorthand for --force",
+      },
+    ]);
+    expect(completeSnapshotActions("delete baseline --f")).toEqual([
+      {
+        value: "delete baseline --force",
+        label: "--force",
+        description: "Overwrite or delete without confirmation",
+      },
+    ]);
+    expect(completeSnapshotActions("delete baseline -")).toEqual([
+      {
+        value: "delete baseline --force",
+        label: "--force",
+        description: "Overwrite or delete without confirmation",
+      },
+      {
+        value: "delete baseline -f",
+        label: "-f",
+        description: "Shorthand for --force",
+      },
+    ]);
+  });
+
+  it("stays silent for unknown flag prefixes and other actions", () => {
+    expect(completeSnapshotActions("save -x")).toBeNull();
+    expect(completeSnapshotActions("save --bogus")).toBeNull();
+    expect(completeSnapshotActions("load -")).toBeNull();
+    expect(completeSnapshotActions("list -")).toBeNull();
   });
 });
 

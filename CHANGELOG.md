@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Add `-f` as a shorthand for `--force` on `/snapshot save` and `/snapshot delete`; the two forms cannot be combined and unknown dash flags are rejected.
+- Autocomplete `--force` and `-f` after `/snapshot save` and `/snapshot delete`, with or without a name; completion values preserve the typed action and name.
+
 ## 0.1.4
 
 - Fix npm image metadata

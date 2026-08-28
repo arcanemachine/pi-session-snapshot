@@ -23,7 +23,7 @@ Keep filesystem access injectable so automated tests never touch the real Pi age
 
 - Snapshot names are safe filename stems, never paths.
 - Store production snapshots under `join(getAgentDir(), "pi-session-snapshot")`.
-- Overwrite and programmatic deletion require explicit `--force`.
+- Overwrite and programmatic deletion require explicit `--force` (`-f` is an accepted shorthand; the two forms cannot be combined).
 - Interactive destructive menus must have a safe default.
 - Save only the active session path; do not copy the full branch tree.
 - Restore by forking; never append to or activate the snapshot file directly.
