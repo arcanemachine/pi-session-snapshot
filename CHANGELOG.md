@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6
+
+- Include the gallery logo in the published package.
+
 ## 0.1.5
 
 - Add `-f` as a shorthand for `--force` on `/snapshot save` and `/snapshot delete`; the two forms cannot be combined and unknown dash flags are rejected.

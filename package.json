@@ -1,6 +1,6 @@
 {
   "name": "@arcanemachine/pi-session-snapshot",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Save and restore reusable snapshots of the active Pi session path",
   "type": "module",
   "keywords": [
@@ -57,7 +57,8 @@
     "src",
     "README.md",
     "CHANGELOG.md",
-    "LICENSE.md"
+    "LICENSE.md",
+    "logo.jpg"
   ],
   "repository": {
     "type": "git",
