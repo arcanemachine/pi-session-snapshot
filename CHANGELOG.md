@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Support a same-run save followed by restoration of the same snapshot; cancel the dependent restore if saving fails.
+- End the source run at the safe tool-batch boundary before restoring, without another source-session agent response.
+- Exclude the restore request from a chained snapshot by selecting an earlier complete session path.
+- Add a persistent user-facing restore record excluded from agent context.
+
 ## 0.2.0
 
 - Add independently authorized `snapshot_save` and `snapshot_restore` agent tools.

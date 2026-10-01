@@ -140,7 +140,9 @@ describe("snapshot agent tools", () => {
       ctx as never,
     );
     expect(firstPending).not.toBeNull();
-    await runPendingSave(firstPending!, flow, paths, ui);
+    const firstSucceeded = await runPendingSave(firstPending!, flow, paths, ui);
+    bridge.finishSave(ctx as never, firstSucceeded);
+    expect(firstSucceeded).toBe(true);
     expect(existsSync(join(paths.snapshotDir, "baseline.jsonl"))).toBe(true);
 
     const collision = await tools[0].execute(
@@ -155,7 +157,14 @@ describe("snapshot agent tools", () => {
       (collision.details as { token: string }).token,
       ctx as never,
     );
-    await runPendingSave(collisionPending!, flow, paths, ui);
+    const collisionSucceeded = await runPendingSave(
+      collisionPending!,
+      flow,
+      paths,
+      ui,
+    );
+    bridge.finishSave(ctx as never, collisionSucceeded);
+    expect(collisionSucceeded).toBe(false);
     expect(notifications.at(-1)).toContain("SNAPSHOT_EXISTS");
 
     const replacement = await tools[0].execute(
@@ -170,8 +179,47 @@ describe("snapshot agent tools", () => {
       (replacement.details as { token: string }).token,
       ctx as never,
     );
-    await runPendingSave(replacementPending!, flow, paths, ui);
+    const replacementSucceeded = await runPendingSave(
+      replacementPending!,
+      flow,
+      paths,
+      ui,
+    );
+    bridge.finishSave(ctx as never, replacementSucceeded);
+    expect(replacementSucceeded).toBe(true);
     expect(notifications.at(-1)).toContain('Saved session snapshot "baseline"');
+  });
+
+  it("chains restore after a pending save of the same name", async () => {
+    const { cwd, session, paths } = setup();
+    setConfiguration({ save: true, restore: true });
+    const tools: any[] = [];
+    const bridge = createSnapshotAgentBridge({ sendUserMessage() {} });
+    registerSnapshotTools(
+      { registerTool: (tool: unknown) => tools.push(tool) } as never,
+      () => paths,
+      bridge,
+    );
+    const ctx = toolContext(cwd, session);
+
+    const save = await tools[0].execute(
+      "save",
+      { name: "chain" },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const restore = await tools[1].execute(
+      "restore",
+      { name: "chain", prompt: "continue" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(save.isError).toBeUndefined();
+    expect(restore.isError).toBeUndefined();
+    expect(restore.terminate).toBe(true);
   });
 
   it("queues an authorized restore and rejects a duplicate request", async () => {
@@ -252,6 +300,41 @@ describe("deferred restore bridge", () => {
     });
   });
 
+  it("dispatches a chained restore after the save completes", () => {
+    setConfiguration({ save: true, restore: true });
+    const sent: string[] = [];
+    const bridge = createSnapshotAgentBridge({
+      sendUserMessage(text) {
+        sent.push(typeof text === "string" ? text : "");
+      },
+    });
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      ui: { notify() {} },
+    } as never;
+    const save = bridge.queueSave({
+      name: "chain",
+      force: false,
+      sessionId: "session-1",
+      leafId: "before-save",
+    });
+    if (!save.queued) throw new Error("Expected save to queue");
+    const restore = bridge.queueRestore({
+      name: "chain",
+      sessionId: "session-1",
+      prompt: "continue",
+    });
+    if (!restore.queued) throw new Error("Expected restore to queue");
+
+    bridge.dispatchAfterSettled(ctx);
+    const pendingSave = bridge.consumeSave(save.token, ctx);
+    expect(pendingSave?.leafId).toBe("before-save");
+    bridge.finishSave(ctx, true);
+
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatch(/^\/snapshot agent-restore /);
+  });
+
   it("dispatches queued saves after settlement", () => {
     setConfiguration({ save: true, restore: false });
     const sent: string[] = [];
@@ -276,6 +359,7 @@ describe("deferred restore bridge", () => {
       name: "baseline",
       force: false,
     });
+    bridge.finishSave(ctx, false);
   });
 
   it("clears a request when command dispatch fails synchronously", () => {
@@ -507,6 +591,54 @@ describe("deferred restore bridge", () => {
     );
     expect(destination).toBeDefined();
     expect(existsSync(destination!)).toBe(true);
+  });
+
+  it("records the restore only in the forked user-facing history", async () => {
+    const { cwd, session, paths } = setup();
+    saveSnapshot({
+      snapshotDir: paths.snapshotDir,
+      name: "baseline",
+      sourceSessionFile: session.getSessionFile()!,
+      leafId: session.getLeafId()!,
+    });
+    let destination: string | undefined;
+    await runPendingRestore(
+      {
+        token: "token",
+        name: "baseline",
+        sessionId: session.getSessionId(),
+      },
+      {
+        hasUI: true,
+        cwd,
+        sessionManager: session,
+        async waitForIdle() {},
+        async switchSession(path) {
+          destination = path;
+          return { cancelled: false };
+        },
+      },
+      paths,
+      { notify() {} },
+    );
+    const forkEntries = SessionManager.open(destination!).getEntries();
+    const sourceEntries = SessionManager.open(
+      join(paths.snapshotDir, "baseline.jsonl"),
+    ).getEntries();
+    expect(
+      forkEntries.some(
+        (entry) =>
+          entry.type === "custom" &&
+          entry.customType === "pi-session-snapshot:restore",
+      ),
+    ).toBe(true);
+    expect(
+      sourceEntries.some(
+        (entry) =>
+          entry.type === "custom" &&
+          entry.customType === "pi-session-snapshot:restore",
+      ),
+    ).toBe(false);
   });
 
   it("keeps the restored session active when the optional prompt fails", async () => {

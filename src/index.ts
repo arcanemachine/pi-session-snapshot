@@ -4,8 +4,13 @@ import type {
   SessionHeader,
 } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { existsSync, unlinkSync } from "node:fs";
-import { createSnapshotAgentBridge, registerSnapshotTools } from "./agent.js";
+import {
+  createSnapshotAgentBridge,
+  registerSnapshotTools,
+  SNAPSHOT_RESTORE_ENTRY_TYPE,
+} from "./agent.js";
 import { refreshConfiguration } from "./authorization.js";
 import { registerSnapshotCommand } from "./command.js";
 import { productionSnapshotPaths } from "./paths.js";
@@ -16,6 +21,20 @@ export default function piSessionSnapshot(pi: ExtensionAPI): void {
   const bridge = createSnapshotAgentBridge(pi);
   registerSnapshotCommand(pi, () => paths, bridge);
   registerSnapshotTools(pi, () => paths, bridge);
+  pi.registerEntryRenderer(
+    SNAPSHOT_RESTORE_ENTRY_TYPE,
+    (entry, _options, theme) => {
+      const data = entry.data as { name?: string } | undefined;
+      return new Text(
+        theme.fg(
+          "accent",
+          `Restored session snapshot "${data?.name ?? "unknown"}".`,
+        ),
+        0,
+        0,
+      );
+    },
+  );
 
   const tracker = new ProvisionalTracker(paths.snapshotDir, (file) => {
     try {
@@ -31,6 +50,11 @@ export default function piSessionSnapshot(pi: ExtensionAPI): void {
     refreshConfiguration(ctx);
     bridge.invalidateForSession(ctx.sessionManager.getSessionId(), ctx.ui);
     tracker.start(provisionalInput(ctx));
+  });
+
+  pi.on("turn_end", (_event, ctx) => {
+    bridge.observeTurnEnd(ctx);
+    if (bridge.shouldStopAfterTurn(ctx)) ctx.abort();
   });
 
   pi.on("agent_settled", (_event, ctx) => {
@@ -70,6 +94,13 @@ function provisionalInput(ctx: ExtensionContext): {
   return {
     sessionFile,
     parentSession: header?.parentSession,
-    entryIds: manager.getEntries().map((entry) => entry.id),
+    entryIds: manager
+      .getEntries()
+      .filter(
+        (entry) =>
+          entry.type !== "custom" ||
+          entry.customType !== SNAPSHOT_RESTORE_ENTRY_TYPE,
+      )
+      .map((entry) => entry.id),
   };
 }

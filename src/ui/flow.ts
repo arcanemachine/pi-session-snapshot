@@ -54,6 +54,7 @@ export interface FlowContext {
     getSessionId(): string;
     getSessionFile(): string | undefined;
     getLeafId(): string | null;
+    getEntry(entryId: string): { parentId: string | null } | undefined;
     getSessionDir(): string;
   };
   waitForIdle(): Promise<void>;
@@ -439,7 +440,11 @@ export function createFlowContext(ctx: {
   cwd: string;
   sessionManager: Pick<
     SessionManager,
-    "getSessionId" | "getSessionFile" | "getLeafId" | "getSessionDir"
+    | "getSessionId"
+    | "getSessionFile"
+    | "getLeafId"
+    | "getEntry"
+    | "getSessionDir"
   >;
   waitForIdle(): Promise<void>;
   switchSession(

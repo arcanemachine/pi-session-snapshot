@@ -73,7 +73,7 @@ Without `--force`, an existing noninteractive save fails rather than overwriting
 The extension registers two agent-callable tools, both denied by default:
 
 - `snapshot_save` queues a save of the active session path until the current agent run settles. It accepts `name` and optional `force: true`.
-- `snapshot_restore` restores a named snapshot after the current agent run settles. It accepts `name` and an optional literal `prompt` that is submitted exactly once in the new session.
+- `snapshot_restore` requests restoration of a named snapshot and ends the originating run at the safe tool-batch boundary. It accepts `name` and an optional literal `prompt` that is submitted exactly once in the new session.
 
 The user controls each capability independently:
 
@@ -86,7 +86,13 @@ The user controls each capability independently:
 /snapshot agent all deny
 ```
 
-Both agent operations are queued until the current run is idle. Restore is deferred because Pi session replacement invalidates the active command context; save is deferred so the checkpoint includes the completed run and tool results. A successful restore forks a new normal session; when a prompt is supplied, it is delivered through that fresh session context. A prompt beginning with `/` is still literal prompt text, not a slash command. Agent tools cannot list or delete snapshots, and saving an existing name still requires the explicit `force` parameter.
+Filesystem saves and session replacement happen only after the current run safely settles. A save-only request captures the completed run and tool results. A restore request ends the run after the issued tool batch is finalized: there is no additional agent response in the original session before replacement.
+
+An agent may request save and then restore of the same name in one run. The restore depends on that save succeeding; failure cancels the restore rather than loading an older file of the same name. In this chained case, the snapshot ends at the latest complete path before the assistant message containing the restore request. If both calls share an assistant message, the snapshot ends before that whole message. This excludes the restore call/result without rewriting transcript entries or leaving unmatched tool calls. Earlier user messages on that path are preserved.
+
+A successful restore forks a new normal session. The new session receives a compact, persistent `Restored session snapshot "<name>".` entry visible to the user but excluded from agent context. It supplies no hidden guidance and does not start a run. A supplied prompt is delivered exactly once through the fresh session context; even a leading `/` is literal text, not a slash command. Without a prompt, the new session remains idle.
+
+Agent tools cannot list or delete snapshots. Saving an existing name requires explicit `force: true`. Only one pending save with one dependent same-name restore is supported; unrelated or duplicate queued requests are rejected.
 
 ### Settings
 

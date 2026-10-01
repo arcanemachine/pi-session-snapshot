@@ -1,6 +1,7 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  SessionManager,
+  type ExtensionAPI,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
@@ -16,10 +17,17 @@ import type { SnapshotPaths } from "./paths.js";
 import { forkSnapshot, saveSnapshot } from "./snapshots.js";
 import type { FlowContext } from "./ui/flow.js";
 
+export const SNAPSHOT_RESTORE_ENTRY_TYPE = "pi-session-snapshot:restore";
+
 export interface SnapshotAgentBridge {
   queueSave(input: PendingSaveInput): QueueOperationResult;
   queueRestore(input: PendingRestoreInput): QueueOperationResult;
+  hasPendingSave(name: string, sessionId: string): boolean;
+  requestStopAfterTurn(sessionId: string): void;
+  observeTurnEnd(ctx: ExtensionContext): void;
+  shouldStopAfterTurn(ctx: ExtensionContext): boolean;
   dispatchAfterSettled(ctx: ExtensionContext): void;
+  finishSave(ctx: ExtensionContext, succeeded: boolean): void;
   invalidateForSession(
     sessionId: string,
     ui: Pick<ExtensionContext["ui"], "notify">,
@@ -34,6 +42,8 @@ export interface PendingSaveInput {
   force: boolean;
   sessionId: string;
   sessionFile?: string;
+  leafId?: string | null;
+  lastSettledLeafId?: string | null;
 }
 
 export interface PendingSave extends PendingSaveInput {
@@ -58,11 +68,17 @@ export type QueueOperationResult =
 function textResult(
   text: string,
   details: unknown = {},
+  terminate = false,
 ): {
   content: [{ type: "text"; text: string }];
   details: unknown;
+  terminate?: boolean;
 } {
-  return { content: [{ type: "text", text }], details };
+  return {
+    content: [{ type: "text", text }],
+    details,
+    ...(terminate ? { terminate: true } : {}),
+  };
 }
 
 function errorResult(error: unknown): {
@@ -86,6 +102,21 @@ function currentSessionId(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionId();
 }
 
+function saveBoundaryLeafId(ctx: ExtensionContext): string | null {
+  const leafId = ctx.sessionManager.getLeafId();
+  if (!leafId) return null;
+  const leaf = ctx.sessionManager.getEntry(leafId) as
+    | { parentId: string | null; type?: string; message?: { role?: string } }
+    | undefined;
+  if (leaf?.type === "message" && leaf.message?.role === "toolResult") {
+    const assistantId = leaf.parentId;
+    if (assistantId) {
+      return ctx.sessionManager.getEntry(assistantId)?.parentId ?? assistantId;
+    }
+  }
+  return leaf?.parentId ?? leafId;
+}
+
 const DISPATCH_TIMEOUT_MS = 30_000;
 
 type PendingOperation =
@@ -97,6 +128,9 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
   private dispatchedToken?: string;
   private dispatchTimer?: ReturnType<typeof setTimeout>;
   private dispatching = false;
+  private chainedRestore?: PendingRestore;
+  private saveExecuting?: PendingSave;
+  private stopAfterTurnSessionId?: string;
 
   queueSave(input: PendingSaveInput): QueueOperationResult {
     return this.queue({
@@ -106,10 +140,53 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
   }
 
   queueRestore(input: PendingRestoreInput): QueueOperationResult {
+    const pending = this.pending;
+    if (
+      pending?.action === "save" &&
+      pending.request.sessionId === input.sessionId &&
+      pending.request.name === input.name &&
+      !this.chainedRestore
+    ) {
+      pending.request.leafId =
+        pending.request.lastSettledLeafId ?? pending.request.leafId;
+      this.chainedRestore = { ...input, token: randomUUID() };
+      return { queued: true, token: this.chainedRestore.token };
+    }
     return this.queue({
       action: "restore",
       request: { ...input, token: randomUUID() },
     });
+  }
+
+  hasPendingSave(name: string, sessionId: string): boolean {
+    return (
+      this.pending?.action === "save" &&
+      this.pending.request.name === name &&
+      this.pending.request.sessionId === sessionId
+    );
+  }
+
+  requestStopAfterTurn(sessionId: string): void {
+    this.stopAfterTurnSessionId = sessionId;
+  }
+
+  observeTurnEnd(ctx: ExtensionContext): void {
+    if (this.pending?.action !== "save" || this.chainedRestore) return;
+    if (this.pending.request.sessionId !== currentSessionId(ctx)) return;
+    const leafId = ctx.sessionManager.getLeafId();
+    if (!leafId) return;
+    this.pending.request.leafId = leafId;
+    this.pending.request.lastSettledLeafId = leafId;
+  }
+
+  shouldStopAfterTurn(ctx: ExtensionContext): boolean {
+    if (!this.stopAfterTurnSessionId) return false;
+    if (this.stopAfterTurnSessionId !== currentSessionId(ctx)) {
+      this.stopAfterTurnSessionId = undefined;
+      return false;
+    }
+    this.stopAfterTurnSessionId = undefined;
+    return true;
   }
 
   dispatchAfterSettled(ctx: ExtensionContext): void {
@@ -164,9 +241,16 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
     sessionId: string,
     ui: Pick<ExtensionContext["ui"], "notify">,
   ): void {
-    if (!this.pending || this.pending.request.sessionId === sessionId) return;
-    const action = this.pending.action;
+    const requestSessionId =
+      this.pending?.request.sessionId ??
+      this.chainedRestore?.sessionId ??
+      this.saveExecuting?.sessionId;
+    if (!requestSessionId || requestSessionId === sessionId) return;
+    const action =
+      this.pending?.action ?? (this.saveExecuting ? "save" : "restore");
     this.clearPending();
+    this.saveExecuting = undefined;
+    this.stopAfterTurnSessionId = undefined;
     ui.notify(
       `SNAPSHOT_${action === "save" ? "CREATE" : "LOAD"}_FAILED: The queued agent ${action} request became stale before it could run.`,
       "warning",
@@ -174,13 +258,42 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
   }
 
   cancelForShutdown(ui: Pick<ExtensionContext["ui"], "notify">): void {
-    if (!this.pending) return;
-    const action = this.pending.action;
+    if (!this.pending && !this.chainedRestore && !this.saveExecuting) return;
+    const action = this.pending?.action ?? "restore";
     this.clearPending();
+    this.saveExecuting = undefined;
+    this.stopAfterTurnSessionId = undefined;
     ui.notify(
       `SNAPSHOT_${action === "save" ? "CREATE" : "LOAD"}_FAILED: The queued agent ${action} request was cancelled during session shutdown.`,
       "warning",
     );
+  }
+
+  finishSave(ctx: ExtensionContext, succeeded: boolean): void {
+    const chained = this.chainedRestore;
+    this.chainedRestore = undefined;
+    this.saveExecuting = undefined;
+    if (!chained) return;
+    if (!succeeded) {
+      ctx.ui.notify(
+        "SNAPSHOT_LOAD_FAILED: The queued restore was cancelled because saving the snapshot failed.",
+        "warning",
+      );
+      return;
+    }
+    if (chained.sessionId !== currentSessionId(ctx)) {
+      ctx.ui.notify(
+        "SNAPSHOT_LOAD_FAILED: The queued restore became stale before it could run.",
+        "warning",
+      );
+      return;
+    }
+    if (!actionPermission("restore")) {
+      ctx.ui.notify(permissionGuidance("restore"), "warning");
+      return;
+    }
+    this.pending = { action: "restore", request: chained };
+    this.dispatchAfterSettled(ctx);
   }
 
   consumeSave(token: string, ctx: ExtensionContext): PendingSave | null {
@@ -194,9 +307,11 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
     }
     if (pending.request.sessionId !== currentSessionId(ctx)) {
       this.clearPending();
+      this.saveExecuting = undefined;
       return null;
     }
-    this.clearPending();
+    this.saveExecuting = pending.request;
+    this.clearPending(true);
     return pending.request;
   }
 
@@ -218,21 +333,24 @@ class SnapshotAgentBridgeImpl implements SnapshotAgentBridge {
   }
 
   private queue(operation: PendingOperation): QueueOperationResult {
-    if (this.pending) {
+    if (this.pending || this.saveExecuting) {
       return {
         queued: false,
-        reason: `Another snapshot ${this.pending.action} request is already queued for the current agent run.`,
+        reason: this.saveExecuting
+          ? "The previous snapshot save is still completing."
+          : `Another snapshot ${this.pending!.action} request is already queued for the current agent run.`,
       };
     }
     this.pending = operation;
     return { queued: true, token: operation.request.token };
   }
 
-  private clearPending(): void {
+  private clearPending(preserveChained = false): void {
     if (this.dispatchTimer) clearTimeout(this.dispatchTimer);
     this.dispatchTimer = undefined;
     this.pending = undefined;
     this.dispatchedToken = undefined;
+    if (!preserveChained) this.chainedRestore = undefined;
   }
 
   constructor(private readonly api: Pick<ExtensionAPI, "sendUserMessage">) {}
@@ -280,6 +398,7 @@ export function registerSnapshotTools(
           force: params.force === true,
           sessionId: currentSessionId(ctx),
           sessionFile: ctx.sessionManager.getSessionFile(),
+          leafId: saveBoundaryLeafId(ctx),
         });
         if (!queued.queued) return errorResult(new Error(queued.reason));
         return textResult(
@@ -322,7 +441,10 @@ export function registerSnapshotTools(
           pathsProvider().snapshotDir,
           name,
         );
-        if (!existsSync(snapshotFile)) {
+        if (
+          !existsSync(snapshotFile) &&
+          !bridge.hasPendingSave(name, currentSessionId(ctx))
+        ) {
           return errorResult(
             new Error(
               `SNAPSHOT_NOT_FOUND: No session snapshot named "${name}" was found.`,
@@ -337,9 +459,11 @@ export function registerSnapshotTools(
           sessionFile: ctx.sessionManager.getSessionFile(),
         });
         if (!queued.queued) return errorResult(new Error(queued.reason));
+        bridge.requestStopAfterTurn(currentSessionId(ctx));
         return textResult(
           `Queued restoration of session snapshot "${name}" until the current agent run settles.${prompt ? " The literal prompt will be submitted in the restored session." : ""}`,
           { name, token: queued.token },
+          true,
         );
       } catch (error) {
         return errorResult(error);
@@ -353,18 +477,18 @@ export async function runPendingSave(
   ctx: FlowContext,
   paths: SnapshotPaths,
   ui: { notify(message: string, type?: "info" | "warning" | "error"): void },
-): Promise<void> {
+): Promise<boolean> {
   await ctx.waitForIdle();
   if (ctx.sessionManager.getSessionId() !== pending.sessionId) {
     ui.notify(
       "SNAPSHOT_CREATE_FAILED: The queued agent save request became stale before it could run.",
       "warning",
     );
-    return;
+    return false;
   }
   if (!actionPermission("save")) {
     ui.notify(permissionGuidance("save"), "warning");
-    return;
+    return false;
   }
   const sessionFile = ctx.sessionManager.getSessionFile();
   const leafId = ctx.sessionManager.getLeafId();
@@ -373,11 +497,11 @@ export async function runPendingSave(
       "SESSION_NOT_PERSISTED: The current session has not been persisted to disk.",
       "error",
     );
-    return;
+    return false;
   }
   if (!leafId) {
     ui.notify("SESSION_EMPTY: The current session has no entries.", "error");
-    return;
+    return false;
   }
   try {
     const result = saveSnapshot(
@@ -385,13 +509,15 @@ export async function runPendingSave(
         snapshotDir: paths.snapshotDir,
         name: pending.name,
         sourceSessionFile: sessionFile,
-        leafId,
+        leafId: pending.leafId ?? leafId,
       },
       { replace: pending.force },
     );
     ui.notify(`Saved session snapshot "${result.name}".`, "info");
+    return true;
   } catch (error) {
     ui.notify(formatSnapshotError(error), "error");
+    return false;
   }
 }
 
@@ -424,6 +550,15 @@ export async function runPendingRestore(
   } catch (error) {
     ui.notify(formatSnapshotError(error), "error");
     return;
+  }
+
+  try {
+    SessionManager.open(destinationFile).appendCustomEntry(
+      SNAPSHOT_RESTORE_ENTRY_TYPE,
+      { name: pending.name },
+    );
+  } catch (error) {
+    ui.notify(formatSnapshotError(error), "warning");
   }
 
   let replacementStarted = false;

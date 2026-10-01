@@ -256,6 +256,53 @@ describe("agent permission command", () => {
     expect(notifications[0]).toContain("/snapshot agent restore allow");
   });
 
+  it("cancels a dependent restore when save permission is revoked", async () => {
+    const { cwd, sessions, agent } = makeSessionDirectories();
+    const session = SessionManager.create(cwd, sessions);
+    const bridge = createSnapshotAgentBridge({ sendUserMessage() {} });
+    setConfiguration({ save: true, restore: true });
+    const save = bridge.queueSave({
+      name: "chain",
+      force: false,
+      sessionId: session.getSessionId(),
+    });
+    expect(save.queued).toBe(true);
+    const restore = bridge.queueRestore({
+      name: "chain",
+      sessionId: session.getSessionId(),
+    });
+    expect(restore.queued).toBe(true);
+    setConfiguration({ save: false, restore: true });
+    const notifications: string[] = [];
+    const handler = createSnapshotCommandHandler(
+      () => ({
+        agentDir: agent,
+        snapshotDir: join(agent, "pi-session-snapshot"),
+      }),
+      bridge,
+    );
+
+    await handler(`agent-save ${save.queued ? save.token : "missing"}`, {
+      cwd,
+      isProjectTrusted: () => false,
+      hasUI: false,
+      sessionManager: session,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+      },
+    } as never);
+
+    expect(notifications.join("\n")).toContain("/snapshot agent save allow");
+    expect(
+      bridge.queueRestore({
+        name: "next",
+        sessionId: session.getSessionId(),
+      }).queued,
+    ).toBe(true);
+  });
+
   it("changes granular process-local permissions and reports status", async () => {
     const { cwd, sessions, agent } = makeSessionDirectories();
     const notifications: Array<{ message: string; type?: string }> = [];
@@ -399,12 +446,16 @@ describe("extension entrypoint", () => {
     const commands: string[] = [];
     const tools: string[] = [];
     const handlers: Record<string, unknown> = {};
+    let entryRenderer: unknown;
     piSessionSnapshot({
       registerCommand(commandName: string) {
         commands.push(commandName);
       },
       registerTool(tool: { name: string }) {
         tools.push(tool.name);
+      },
+      registerEntryRenderer(_customType: string, renderer: unknown) {
+        entryRenderer = renderer;
       },
       on(event: string, handler: unknown) {
         handlers[event] = handler;
@@ -413,6 +464,7 @@ describe("extension entrypoint", () => {
 
     expect(commands).toEqual(["snapshot"]);
     expect(tools).toEqual(["snapshot_save", "snapshot_restore"]);
+    expect(entryRenderer).toEqual(expect.any(Function));
     expect(handlers).toHaveProperty("session_start");
     expect(handlers).toHaveProperty("agent_start");
     expect(handlers).toHaveProperty("session_shutdown");

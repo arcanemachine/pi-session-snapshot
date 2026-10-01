@@ -311,14 +311,22 @@ export function createSnapshotCommandHandler(
         return;
       }
       if (!resolvePermission("save").allowed) {
+        bridge.finishSave(ctx, false);
         ctx.ui.notify(permissionGuidance("save"), "warning");
         return;
       }
+      let succeeded = false;
       try {
-        await runPendingSave(pending, adaptContext(ctx), paths, ctx.ui);
+        succeeded = await runPendingSave(
+          pending,
+          adaptContext(ctx),
+          paths,
+          ctx.ui,
+        );
       } catch (error) {
         ctx.ui.notify(formatSnapshotError(error), "error");
       }
+      bridge.finishSave(ctx, succeeded);
       return;
     }
     if (parsed.action === "agent-restore") {
