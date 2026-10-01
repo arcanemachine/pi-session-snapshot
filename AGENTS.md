@@ -4,7 +4,7 @@
 
 `pi-session-snapshot` saves the current Pi session's active root-to-leaf path as a named JSONL snapshot and restores it by forking a new normal session.
 
-It preserves Pi session context only. It does not preserve Git history, working-tree files, uncommitted changes, environment variables, or processes. V1 provides only the user-operated `/snapshot` command; do not add an LLM-callable tool or a custom startup flag.
+It preserves Pi session context only. It does not preserve Git history, working-tree files, uncommitted changes, environment variables, or processes. User-operated `/snapshot` commands remain the primary interface. The package also provides separately authorized LLM-callable save and restore tools; both are denied by default and must remain independently configurable. Do not add a custom startup flag unless a separately approved feature requires one.
 
 ## Package style
 
@@ -18,6 +18,12 @@ Match maintained sibling packages in the Pi superproject:
 - independently installable behavior.
 
 Keep filesystem access injectable so automated tests never touch the real Pi agent directory. Keep modules focused; do not create generic service or repository frameworks.
+
+## Configuration and agent-tool safety
+
+- Read settings from Pi's normal global `settings.json` and trusted project `.pi/settings.json` under the exact `pi-session-snapshot` namespace. Trusted project fields override corresponding global fields; untrusted project settings are ignored.
+- Keep the two agent permission keys flat-ish: `agentSaveToolAllowed` and `agentRestoreToolAllowed`. Both default to denied, and malformed values fail closed.
+- User commands may create process-local permission overrides, but never persist those overrides in session entries, snapshots, transcripts, environment variables, or child-process arguments.
 
 ## Safety contracts
 

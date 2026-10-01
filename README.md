@@ -12,6 +12,11 @@ Useful for establishing a checkpoint from which you want to resume one or more s
 
 > A session snapshot preserves Pi conversation context only. It does not preserve Git history, files, uncommitted changes, environment variables, or processes.
 
+## Requirements
+
+- Pi 0.99.2 or later
+- Node.js 22.19.0 or later for package development
+
 ## Installation
 
 ### From GitHub
@@ -46,11 +51,13 @@ pi -e /path/to/pi-session-snapshot/src/index.ts
 /snapshot load [name]
 /snapshot list
 /snapshot delete [name] [--force|-f]
+/snapshot agent status
+/snapshot agent [save|restore|all] [allow|deny|reset]
 ```
 
 Running `/snapshot` opens a menu for saving, loading, deleting, and listing snapshots. Saving an existing name opens a safe-default confirm: **No** / **Yes** — answering **No** returns to the name field with the entered value intact (so you can save it under a different name), and **Yes** overwrites.
 
-The top-level actions (`save`, `load`, `list`, `delete`) are autocompleted after `/snapshot `, and `--force` / `-f` are autocompleted after `/snapshot save ` or `/snapshot delete `, with or without a name. `/snapshot list` prints the directory where snapshots are stored along with the saved snapshots.
+The top-level actions (`save`, `load`, `list`, `delete`, `agent`) are autocompleted after `/snapshot `. Agent targets and decisions are also completed. `--force` / `-f` are autocompleted after `/snapshot save ` or `/snapshot delete `, with or without a name. `/snapshot list` prints the directory where snapshots are stored along with the saved snapshots.
 
 For automation or non-TUI use, `--force` is required to replace or delete:
 
@@ -60,6 +67,41 @@ For automation or non-TUI use, `--force` is required to replace or delete:
 ```
 
 Without `--force`, an existing noninteractive save fails rather than overwriting, and noninteractive deletion fails rather than deleting.
+
+### Agent tools
+
+The extension registers two agent-callable tools, both denied by default:
+
+- `snapshot_save` queues a save of the active session path until the current agent run settles. It accepts `name` and optional `force: true`.
+- `snapshot_restore` restores a named snapshot after the current agent run settles. It accepts `name` and an optional literal `prompt` that is submitted exactly once in the new session.
+
+The user controls each capability independently:
+
+```text
+/snapshot agent status
+/snapshot agent save allow
+/snapshot agent restore allow
+/snapshot agent save deny
+/snapshot agent restore reset
+/snapshot agent all deny
+```
+
+Both agent operations are queued until the current run is idle. Restore is deferred because Pi session replacement invalidates the active command context; save is deferred so the checkpoint includes the completed run and tool results. A successful restore forks a new normal session; when a prompt is supplied, it is delivered through that fresh session context. A prompt beginning with `/` is still literal prompt text, not a slash command. Agent tools cannot list or delete snapshots, and saving an existing name still requires the explicit `force` parameter.
+
+### Settings
+
+Agent-tool defaults use Pi's normal settings files and the exact `pi-session-snapshot` namespace. Both settings default to `false`:
+
+```json
+{
+  "pi-session-snapshot": {
+    "agentSaveToolAllowed": true,
+    "agentRestoreToolAllowed": false
+  }
+}
+```
+
+Global settings are read from `~/.pi/agent/settings.json`. A trusted project's `.pi/settings.json` may override either field independently; omitted project fields inherit the global value. Untrusted project settings are ignored. Invalid values fail closed and produce a warning. The `/snapshot agent ... allow|deny|reset` commands create process-local overrides that do not modify settings, snapshots, or conversation history; they survive extension reload and session replacement in the same Pi process but not process exit. Reload Pi after changing settings.
 
 Snapshots are stored under:
 

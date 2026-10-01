@@ -5,13 +5,17 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { existsSync, unlinkSync } from "node:fs";
+import { createSnapshotAgentBridge, registerSnapshotTools } from "./agent.js";
+import { refreshConfiguration } from "./authorization.js";
 import { registerSnapshotCommand } from "./command.js";
 import { productionSnapshotPaths } from "./paths.js";
 import { ProvisionalTracker, type ShutdownReason } from "./provisional.js";
 
 export default function piSessionSnapshot(pi: ExtensionAPI): void {
   const paths = productionSnapshotPaths();
-  registerSnapshotCommand(pi, () => paths);
+  const bridge = createSnapshotAgentBridge(pi);
+  registerSnapshotCommand(pi, () => paths, bridge);
+  registerSnapshotTools(pi, () => paths, bridge);
 
   const tracker = new ProvisionalTracker(paths.snapshotDir, (file) => {
     try {
@@ -24,7 +28,13 @@ export default function piSessionSnapshot(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", (_event, ctx) => {
+    refreshConfiguration(ctx);
+    bridge.invalidateForSession(ctx.sessionManager.getSessionId(), ctx.ui);
     tracker.start(provisionalInput(ctx));
+  });
+
+  pi.on("agent_settled", (_event, ctx) => {
+    bridge.dispatchAfterSettled(ctx);
   });
 
   pi.on("agent_start", (_event, ctx) => {
@@ -32,6 +42,7 @@ export default function piSessionSnapshot(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", (event, ctx) => {
+    bridge.cancelForShutdown(ctx.ui);
     const file = tracker.finalize(
       provisionalInput(ctx),
       event.reason as ShutdownReason,

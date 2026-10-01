@@ -51,6 +51,7 @@ export interface FlowContext {
   /** Current working directory, used as the restore target. */
   cwd: string;
   sessionManager: {
+    getSessionId(): string;
     getSessionFile(): string | undefined;
     getLeafId(): string | null;
     getSessionDir(): string;
@@ -59,7 +60,15 @@ export interface FlowContext {
   switchSession(
     sessionPath: string,
     options?: {
-      withSession?: (ctx: unknown) => Promise<void> | void;
+      withSession?: (ctx: {
+        ui: {
+          notify(message: string, type?: "info" | "warning" | "error"): void;
+        };
+        sendUserMessage(
+          content: string,
+          options?: { expandPromptTemplates?: boolean },
+        ): Promise<void>;
+      }) => Promise<void> | void;
     },
   ): Promise<{ cancelled: boolean }>;
 }
@@ -430,13 +439,21 @@ export function createFlowContext(ctx: {
   cwd: string;
   sessionManager: Pick<
     SessionManager,
-    "getSessionFile" | "getLeafId" | "getSessionDir"
+    "getSessionId" | "getSessionFile" | "getLeafId" | "getSessionDir"
   >;
   waitForIdle(): Promise<void>;
   switchSession(
     sessionPath: string,
     options?: {
-      withSession?: (ctx: unknown) => Promise<void> | void;
+      withSession?: (ctx: {
+        ui: {
+          notify(message: string, type?: "info" | "warning" | "error"): void;
+        };
+        sendUserMessage(
+          content: string,
+          options?: { expandPromptTemplates?: boolean },
+        ): Promise<void>;
+      }) => Promise<void> | void;
     },
   ): Promise<{ cancelled: boolean }>;
 }): FlowContext {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- Add independently authorized `snapshot_save` and `snapshot_restore` agent tools.
+- Add optional literal prompt submission after an authorized snapshot restore.
+- Add flat global/trusted-project settings and `/snapshot agent` permission controls.
+- Require Pi 0.99.2 or later for deferred command dispatch and fresh-session prompt delivery.
+
 ## 0.1.6
 
 - Include the gallery logo in the published package.

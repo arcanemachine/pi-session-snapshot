@@ -8,6 +8,12 @@ import {
   parseSnapshotCommand,
   registerSnapshotCommand,
 } from "../src/command.js";
+import {
+  getOverride,
+  resetPermissionState,
+  setConfiguration,
+} from "../src/authorization.js";
+import { createSnapshotAgentBridge } from "../src/agent.js";
 import type { SnapshotPaths } from "../src/paths.js";
 import { SNAPSHOT_COMMAND_DESCRIPTION } from "../src/ui/flow.js";
 import {
@@ -17,7 +23,10 @@ import {
   makeSessionDirectories,
 } from "./helpers.js";
 
-afterEach(cleanupTempDirectories);
+afterEach(() => {
+  cleanupTempDirectories();
+  resetPermissionState();
+});
 
 describe("parseSnapshotCommand", () => {
   it("parses interactive, list, and direct forms", () => {
@@ -74,6 +83,28 @@ describe("parseSnapshotCommand", () => {
       name: "baseline",
       force: false,
     });
+    expect(parseSnapshotCommand("agent status")).toEqual({
+      action: "agent",
+      agentDecision: "status",
+      force: false,
+    });
+    expect(parseSnapshotCommand("agent save allow")).toEqual({
+      action: "agent",
+      agentTarget: "save",
+      agentDecision: "allow",
+      force: false,
+    });
+    expect(parseSnapshotCommand("agent all reset")).toEqual({
+      action: "agent",
+      agentTarget: "all",
+      agentDecision: "reset",
+      force: false,
+    });
+    expect(parseSnapshotCommand("agent-save token")).toEqual({
+      action: "agent-save",
+      token: "token",
+      force: false,
+    });
   });
 
   it("rejects unknown actions and flags", () => {
@@ -87,6 +118,9 @@ describe("parseSnapshotCommand", () => {
     expect(() => parseSnapshotCommand("save a b")).toThrow();
     expect(() => parseSnapshotCommand("save --force --force x")).toThrow();
     expect(() => parseSnapshotCommand("save --force -f x")).toThrow();
+    expect(() => parseSnapshotCommand("agent save")).toThrow();
+    expect(() => parseSnapshotCommand("agent nope allow")).toThrow();
+    expect(() => parseSnapshotCommand("agent save maybe")).toThrow();
   });
 });
 
@@ -187,13 +221,80 @@ describe("command handler", () => {
   });
 });
 
+describe("agent permission command", () => {
+  it("rejects an internal restore after permission is revoked", async () => {
+    const { cwd, sessions, agent } = makeSessionDirectories();
+    const session = SessionManager.create(cwd, sessions);
+    const bridge = createSnapshotAgentBridge({ sendUserMessage() {} });
+    const queued = bridge.queueRestore({
+      name: "baseline",
+      sessionId: session.getSessionId(),
+    });
+    if (!queued.queued) throw new Error("Expected restore to queue");
+    setConfiguration({ save: false, restore: false });
+    const notifications: string[] = [];
+    const handler = createSnapshotCommandHandler(
+      () => ({
+        agentDir: agent,
+        snapshotDir: join(agent, "pi-session-snapshot"),
+      }),
+      bridge,
+    );
+
+    await handler(`agent-restore ${queued.token}`, {
+      cwd,
+      isProjectTrusted: () => false,
+      hasUI: false,
+      sessionManager: session,
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+      },
+    } as never);
+
+    expect(notifications[0]).toContain("/snapshot agent restore allow");
+  });
+
+  it("changes granular process-local permissions and reports status", async () => {
+    const { cwd, sessions, agent } = makeSessionDirectories();
+    const notifications: Array<{ message: string; type?: string }> = [];
+    const handler = createSnapshotCommandHandler(() => ({
+      agentDir: agent,
+      snapshotDir: join(agent, "pi-session-snapshot"),
+    }));
+    const context = {
+      cwd,
+      hasUI: false,
+      isProjectTrusted: () => false,
+      sessionManager: SessionManager.create(cwd, sessions),
+      ui: {
+        notify(message: string, type?: string) {
+          notifications.push({ message, type });
+        },
+      },
+    };
+
+    await handler("agent save allow", context as never);
+    expect(getOverride("save")).toBe(true);
+    await handler("agent restore deny", context as never);
+    expect(getOverride("restore")).toBe(false);
+    await handler("agent status", context as never);
+    expect(notifications.at(-1)?.message).toContain("save: allowed");
+    expect(notifications.at(-1)?.message).toContain("restore: denied");
+    await handler("agent all reset", context as never);
+    expect(getOverride("save")).toBeNull();
+    expect(getOverride("restore")).toBeNull();
+  });
+});
+
 describe("completeSnapshotActions", () => {
   it("offers every top-level action for an empty prefix", () => {
     expect(
       completeSnapshotActions("")
         ?.map((item) => item.value)
         .sort(),
-    ).toEqual(["delete", "list", "load", "save"]);
+    ).toEqual(["agent", "delete", "list", "load", "save"]);
   });
 
   it("narrows to a single matching action by prefix", () => {
@@ -208,6 +309,15 @@ describe("completeSnapshotActions", () => {
 
   it("returns null once the prefix has moved past the action token", () => {
     expect(completeSnapshotActions("save ")).toBeNull();
+    expect(
+      completeSnapshotActions("agent s")?.map((item) => item.value),
+    ).toEqual(["agent status", "agent save"]);
+    expect(
+      completeSnapshotActions("agent save ")?.map((item) => item.value),
+    ).toEqual(["agent save allow", "agent save deny", "agent save reset"]);
+    expect(completeSnapshotActions("agent status")).toBeNull();
+    expect(completeSnapshotActions("agent save allow")).toBeNull();
+    expect(completeSnapshotActions("agent all reset")).toBeNull();
     expect(completeSnapshotActions("save baseline")).toBeNull();
   });
 
@@ -302,9 +412,10 @@ describe("extension entrypoint", () => {
     } as never);
 
     expect(commands).toEqual(["snapshot"]);
-    expect(tools).toEqual([]);
+    expect(tools).toEqual(["snapshot_save", "snapshot_restore"]);
     expect(handlers).toHaveProperty("session_start");
     expect(handlers).toHaveProperty("agent_start");
     expect(handlers).toHaveProperty("session_shutdown");
+    expect(handlers).toHaveProperty("agent_settled");
   });
 });
